@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Universal Video Downloader - Highest Quality Free Downloads</title>
+    <meta name="description" content="Download high-quality videos and audio from YouTube, Instagram, TikTok, Facebook, X (Twitter), and more for free.">
+    
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+    
+    <!-- Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <!-- Styles -->
+    <link rel="stylesheet" href="styles.css">
+    
+    <!-- AdSense Script (Replace client ID when ready) -->
+    <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-YOUR_ADSENSE_ID" crossorigin="anonymous"></script>
+</head>
+<body>
+    <!-- Navigation -->
+    <nav class="navbar">
+        <div class="container nav-container">
+            <a href="#" class="logo">
+                <i class="fa-solid fa-bolt text-gradient"></i>
+                <span>Uni<span class="text-gradient">Downloader</span></span>
+            </a>
+            <ul class="nav-links">
+                <li><a href="#home">Home</a></li>
+                <li><a href="#features">Features</a></li>
+                <li><a href="#platforms">Supported</a></li>
+            </ul>
+        </div>
+    </nav>
+
+    <main>
+        <!-- Hero Section -->
+        <section id="home" class="hero">
+            <div class="container hero-container">
+                <!-- Background decorative elements -->
+                <div class="glow-orb orb-1"></div>
+                <div class="glow-orb orb-2"></div>
+                
+                <h1 class="hero-title">Download Any Video at <br><span class="text-gradient">Highest Quality</span></h1>
+                <p class="hero-subtitle">Instantly save videos from YouTube, Instagram, TikTok, X (Twitter), and 100+ other platforms. Fast, free, and secure.</p>
+                
+                <div class="downloader-box glass-panel">
+                    <form id="download-form" class="download-form">
+                        <div class="input-group">
+                            <i class="fa-solid fa-link input-icon"></i>
+                            <input type="url" id="video-url" placeholder="Paste video URL here..." required autocomplete="off">
+                            <button type="button" class="paste-btn" id="paste-btn" title="Paste from clipboard"><i class="fa-solid fa-clipboard"></i></button>
+                        </div>
+                        <button type="submit" class="download-btn">
+                            <span>Get Video</span>
+                            <i class="fa-solid fa-arrow-down"></i>
+                        </button>
+                    </form>
+
+                    <!-- Loading State -->
+                    <div id="loading-state" class="state-container hidden">
+                        <div class="spinner"></div>
+                        <p>Processing your link... This might take a few seconds.</p>
+                    </div>
+
+                    <!-- Error State -->
+                    <div id="error-state" class="state-container hidden">
+                        <i class="fa-solid fa-circle-exclamation error-icon"></i>
+                        <p id="error-message">Oops! Something went wrong. Please check the URL and try again.</p>
+                        <button type="button" class="retry-btn" id="retry-btn">Try Again</button>
+                    </div>
+
+                    <!-- Result State -->
+                    <div id="result-state" class="result-container hidden">
+                        <div class="result-header">
+                            <i class="fa-solid fa-circle-check success-icon"></i>
+                            <h3>Video Ready!</h3>
+                        </div>
+                        <div class="result-card">
+                            <div class="video-preview-placeholder">
+                                <i class="fa-solid fa-video"></i>
+                            </div>
+                            <div class="download-options">
+                                <a href="#" id="download-link-mp4" class="btn btn-primary" target="_blank">
+                                    <i class="fa-solid fa-film"></i> Download MP4 (Highest Quality)
+                                </a>
+                                <a href="#" id="download-link-mp3" class="btn btn-secondary" target="_blank">
+                                    <i class="fa-solid fa-music"></i> Download MP3 (Audio Only)
+                                </a>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Top Ad Space -->
+        <section class="ad-section">
+            <div class="container">
+                <div class="ad-container">
+                    <span class="ad-label">Advertisement</span>
+                    <!-- Google AdSense Integration -->
+                    <ins class="adsbygoogle"
+                         style="display:block"
+                         data-ad-client="ca-pub-YOUR_ADSENSE_ID"
+                         data-ad-slot="YOUR_AD_SLOT"
+                         data-ad-format="auto"
+                         data-full-width-responsive="true"></ins>
+                    <script>
+                         (adsbygoogle = window.adsbygoogle || []).push({});
+                    </script>
+                </div>
+            </div>
+        </section>
+
+        <!-- Features Section -->
+        <section id="features" class="features section-padding">
+            <div class="container">
+                <div class="section-header">
+                    <h2>Why Choose <span class="text-gradient">UniDownloader?</span></h2>
+                    <p>Designed for professionals and everyday users alike.</p>
+                </div>
+                <div class="features-grid">
+                    <div class="feature-card glass-panel">
+                        <div class="feature-icon"><i class="fa-solid fa-bolt"></i></div>
+                        <h3>Lightning Fast</h3>
+                        <p>Our optimized servers ensure your videos are processed and downloaded in seconds, not minutes.</p>
+                    </div>
+                    <div class="feature-card glass-panel">
+                        <div class="feature-icon"><i class="fa-solid fa-display"></i></div>
+                        <h3>Highest Quality Support</h3>
+                        <p>We extract the highest possible resolution available on the source platform automatically.</p>
+                    </div>
+                    <div class="feature-card glass-panel">
+                        <div class="feature-icon"><i class="fa-solid fa-shield-halved"></i></div>
+                        <h3>100% Secure</h3>
+                        <p>No malware, no tracking. We don't store your downloaded files on our servers.</p>
+                    </div>
+                    <div class="feature-card glass-panel">
+                        <div class="feature-icon"><i class="fa-solid fa-mobile-screen"></i></div>
+                        <h3>Device Friendly</h3>
+                        <p>Works flawlessly on PC, Mac, iOS, and Android without installing any additional apps.</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Platforms Section -->
+        <section id="platforms" class="platforms section-padding">
+            <div class="container">
+                <div class="section-header">
+                    <h2>Supported <span class="text-gradient">Platforms</span></h2>
+                    <p>We support over 100+ websites. Here are the most popular ones.</p>
+                </div>
+                <div class="platforms-grid">
+                    <div class="platform-card">
+                        <i class="fa-brands fa-youtube" style="color: #ff0000;"></i>
+                        <span>YouTube</span>
+                    </div>
+                    <div class="platform-card">
+                        <i class="fa-brands fa-instagram" style="color: #e1306c;"></i>
+                        <span>Instagram</span>
+                    </div>
+                    <div class="platform-card">
+                        <i class="fa-brands fa-tiktok" style="color: #00f2fe;"></i>
+                        <span>TikTok</span>
+                    </div>
+                    <div class="platform-card">
+                        <i class="fa-brands fa-x-twitter" style="color: #ffffff;"></i>
+                        <span>X (Twitter)</span>
+                    </div>
+                    <div class="platform-card">
+                        <i class="fa-brands fa-facebook" style="color: #1877f2;"></i>
+                        <span>Facebook</span>
+                    </div>
+                    <div class="platform-card">
+                        <i class="fa-brands fa-reddit" style="color: #ff4500;"></i>
+                        <span>Reddit</span>
+                    </div>
+                    <div class="platform-card">
+                        <i class="fa-brands fa-twitch" style="color: #9146ff;"></i>
+                        <span>Twitch</span>
+                    </div>
+                    <div class="platform-card">
+                        <i class="fa-brands fa-vimeo" style="color: #1ab7ea;"></i>
+                        <span>Vimeo</span>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Bottom Ad Space -->
+        <section class="ad-section pb-large">
+            <div class="container">
+                <div class="ad-container">
+                    <span class="ad-label">Advertisement</span>
+                    <!-- Google AdSense Integration -->
+                    <ins class="adsbygoogle"
+                         style="display:block"
+                         data-ad-client="ca-pub-YOUR_ADSENSE_ID"
+                         data-ad-slot="YOUR_AD_SLOT"
+                         data-ad-format="auto"
+                         data-full-width-responsive="true"></ins>
+                    <script>
+                         (adsbygoogle = window.adsbygoogle || []).push({});
+                    </script>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <!-- Footer -->
+    <footer>
+        <div class="container footer-container">
+            <div class="footer-info">
+                <a href="#" class="logo">
+                    <i class="fa-solid fa-bolt text-gradient"></i>
+                    <span>Uni<span class="text-gradient">Downloader</span></span>
+                </a>
+                <p>Your ultimate tool for downloading high-quality videos across the web. Fast, free, and secure.</p>
+            </div>
+            <div class="footer-links">
+                <div class="link-group">
+                    <h4>Legal</h4>
+                    <a href="#">Terms of Service</a>
+                    <a href="#">Privacy Policy</a>
+                    <a href="#">DMCA</a>
+                </div>
+                <div class="link-group">
+                    <h4>Support</h4>
+                    <a href="#">Contact Us</a>
+                    <a href="#">FAQ</a>
+                    <a href="#">API Documentation</a>
+                </div>
+            </div>
+        </div>
+        <div class="footer-bottom">
+            <p>&copy; 2026 UniDownloader. All rights reserved. We are not affiliated with the social media platforms mentioned.</p>
+        </div>
+    </footer>
+
+    <!-- Scripts -->
+    <script src="app.js"></script>
+</body>
+</html>

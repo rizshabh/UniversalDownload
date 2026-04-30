@@ -1,0 +1,23 @@
+{
+  "name": "universaldownload",
+  "version": "1.0.0",
+  "description": "Universal Video Downloader - Download from YouTube, Instagram, TikTok and 100+ platforms",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "keywords": ["video downloader", "youtube", "instagram", "tiktok"],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "cors": "^2.8.6",
+    "express": "^5.2.1",
+    "uuid": "^14.0.0",
+    "yt-dlp-wrap": "^2.3.12"
+  }
+}
