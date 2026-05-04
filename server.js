@@ -127,10 +127,64 @@ async function extractStreamUrl(url) {
     }
 }
 
+// ─── Terabox Paid API ─────────────────────────────────────────────────────────
+async function fetchTeraboxInfo(targetUrl) {
+    const apiKey = process.env.TERABOX_RAPIDAPI_KEY || '5074d40d75msh575879a3941d625p157655jsn15142dc1fdd7';
+    
+    // Using the exact API provided: terabox-downloader-direct-download-link-generator
+    const r = await fetch('https://terabox-downloader-direct-download-link-generator.p.rapidapi.com/fetch', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'x-rapidapi-key': apiKey,
+            'x-rapidapi-host': 'terabox-downloader-direct-download-link-generator.p.rapidapi.com'
+        },
+        body: JSON.stringify({ url: targetUrl })
+    });
+    
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.message || 'Terabox API Error');
+    
+    // The API returns an array of files or resolutions.
+    const file = Array.isArray(data.files) ? data.files[0] : (Array.isArray(data) ? data[0] : (data.response || data));
+    const directLink = file?.resolutions?.['Fast Download'] || file?.resolutions?.['HD Video'] || file?.dlink || file?.link || file?.downloadLink || data?.downloadLink;
+    
+    if (!directLink) {
+        console.error("Terabox API Data:", JSON.stringify(data));
+        throw new Error('API succeeded but did not return a valid direct download link. Check API documentation.');
+    }
+
+    return {
+        title: file?.server_filename || file?.title || 'Terabox File',
+        thumbnail: file?.thumbs?.url1 || file?.thumbnail || null,
+        duration: null,
+        platform: 'TeraBox',
+        formats: [{
+            format_id: 'best',
+            ext: 'mp4',
+            quality: 'HD',
+            height: 1080,
+            vcodec: 'avc1',
+            acodec: 'mp4a'
+        }],
+        streamUrl: directLink
+    };
+}
+
 // ─── GET /api/info ────────────────────────────────────────────────────────────
 app.post('/api/info', async (req, res) => {
     const { url } = req.body;
     if (!url) return res.status(400).json({ error: 'URL is required' });
+
+    // Intercept Terabox URLs and use the paid API instead of yt-dlp/puppeteer
+    if (url.includes('terabox.com') || url.includes('teraboxapp.com') || url.includes('1024tera.com')) {
+        try {
+            const info = await fetchTeraboxInfo(url);
+            return res.json(info);
+        } catch (e) {
+            return res.status(400).json({ error: `TeraBox API Failed: ${e.message}` });
+        }
+    }
 
     function fetchInfo(targetUrl, isStream = false) {
         let data = '', err = '';
