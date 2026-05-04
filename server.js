@@ -23,8 +23,10 @@ const jobs = new Map();
 
 // ─── Find yt-dlp ──────────────────────────────────────────────────────────────
 function getYtDlpPath() {
+    const isWin = process.platform === 'win32';
     try {
-        const r = execSync('where yt-dlp', { encoding: 'utf8' }).trim().split('\n')[0].trim();
+        const cmd = isWin ? 'where yt-dlp' : 'which yt-dlp';
+        const r = execSync(cmd, { encoding: 'utf8' }).trim().split('\n')[0].trim();
         if (r) return r;
     } catch (_) {}
     for (const fb of ['yt-dlp', 'yt-dlp.exe',
@@ -194,6 +196,10 @@ app.post('/api/info', async (req, res) => {
         proc.stderr.on('data', d => err += d);
         proc.on('close', async code => {
             if (code !== 0 || !data.trim()) {
+                console.error(`\n❌ yt-dlp info fetch failed for ${targetUrl}`);
+                console.error(`Exit Code: ${code}`);
+                console.error(`Error Output: ${err}\n`);
+
                 if (!isStream) {
                     console.log('yt-dlp failed, attempting puppeteer fallback for:', targetUrl);
                     const streamUrl = await extractStreamUrl(targetUrl);
@@ -202,7 +208,7 @@ app.post('/api/info', async (req, res) => {
                         return fetchInfo(streamUrl, true);
                     }
                 }
-                return res.status(400).json({ error: 'Could not fetch video info. URL may be invalid, private, or unsupported.' });
+                return res.status(400).json({ error: 'Could not fetch video info. URL may be invalid, private, or unsupported. Check server logs.' });
             }
             try {
                 const info = JSON.parse(data.trim().split('\n')[0]);
