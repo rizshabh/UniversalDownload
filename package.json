@@ -10,13 +10,19 @@
   "engines": {
     "node": ">=18.0.0"
   },
-  "keywords": ["video downloader", "youtube", "instagram", "tiktok"],
+  "keywords": [
+    "video downloader",
+    "youtube",
+    "instagram",
+    "tiktok"
+  ],
   "author": "",
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
     "cors": "^2.8.6",
     "express": "^5.2.1",
+    "puppeteer": "^24.42.0",
     "uuid": "^14.0.0",
     "yt-dlp-wrap": "^2.3.12"
   }

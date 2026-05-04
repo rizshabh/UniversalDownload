@@ -1,5 +1,9 @@
 [phases.setup]
-nixPkgs = ["yt-dlp", "ffmpeg"]
+nixPkgs = ["yt-dlp", "ffmpeg", "chromium"]
+
+[variables]
+PUPPETEER_SKIP_CHROMIUM_DOWNLOAD = "true"
+PUPPETEER_EXECUTABLE_PATH = "/usr/bin/chromium"
 
 [phases.install]
 cmds = ["npm install"]

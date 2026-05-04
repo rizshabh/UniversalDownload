@@ -21,6 +21,15 @@
     <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-YOUR_ADSENSE_ID" crossorigin="anonymous"></script>
 </head>
 <body>
+    <!-- SVG gradient defs for progress ring -->
+    <svg width="0" height="0" style="position:absolute">
+        <defs>
+            <linearGradient id="ringGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" stop-color="#8b5cf6"/>
+                <stop offset="100%" stop-color="#ec4899"/>
+            </linearGradient>
+        </defs>
+    </svg>
     <!-- Navigation -->
     <nav class="navbar">
         <div class="container nav-container">
@@ -28,13 +37,17 @@
                 <i class="fa-solid fa-bolt text-gradient"></i>
                 <span>Uni<span class="text-gradient">Downloader</span></span>
             </a>
-            <ul class="nav-links">
-                <li><a href="#home">Home</a></li>
-                <li><a href="#features">Features</a></li>
-                <li><a href="#platforms">Supported</a></li>
+            <ul class="nav-links" id="nav-links">
+                <li><a href="#home" class="nav-link-item">Home</a></li>
+                <li><a href="#features" class="nav-link-item">Features</a></li>
+                <li><a href="#platforms" class="nav-link-item">Supported</a></li>
             </ul>
+            <button class="hamburger" id="hamburger" aria-label="Toggle menu">
+                <span></span><span></span><span></span>
+            </button>
         </div>
     </nav>
+    <div class="nav-overlay" id="nav-overlay"></div>
 
     <main>
         <!-- Hero Section -->
@@ -80,16 +93,33 @@
                             <h3>Video Ready!</h3>
                         </div>
                         <div class="result-card">
-                            <div class="video-preview-placeholder">
+                            <!-- Thumbnail -->
+                            <div class="video-preview-placeholder" id="video-thumb">
                                 <i class="fa-solid fa-video"></i>
                             </div>
+                            <!-- Title -->
+                            <p id="video-title-display" class="video-title-text"></p>
+
+                            <!-- ── Video Quality Selector ── -->
+                            <div class="quality-section">
+                                <div class="quality-label">
+                                    <i class="fa-solid fa-sliders"></i>
+                                    Select Video Quality
+                                </div>
+                                <div class="quality-pills" id="quality-pills">
+                                    <!-- populated by JS -->
+                                </div>
+                            </div>
+
+                            <!-- ── Download Buttons ── -->
                             <div class="download-options">
-                                <a href="#" id="download-link-mp4" class="btn btn-primary" target="_blank">
-                                    <i class="fa-solid fa-film"></i> Download MP4 (Highest Quality)
-                                </a>
-                                <a href="#" id="download-link-mp3" class="btn btn-secondary" target="_blank">
+                                <button id="download-link-mp4" class="btn btn-primary">
+                                    <i class="fa-solid fa-film"></i>
+                                    <span id="mp4-btn-text">Download MP4</span>
+                                </button>
+                                <button id="download-link-mp3" class="btn btn-secondary">
                                     <i class="fa-solid fa-music"></i> Download MP3 (Audio Only)
-                                </a>
+                                </button>
                             </div>
                         </div>
                     </div>
@@ -241,6 +271,40 @@
             <p>&copy; 2026 UniDownloader. All rights reserved. We are not affiliated with the social media platforms mentioned.</p>
         </div>
     </footer>
+
+    <!-- ─── Download Progress Modal ───────────────────────────────── -->
+    <div id="progress-modal" class="progress-modal hidden">
+        <div class="progress-backdrop"></div>
+        <div class="progress-dialog glass-panel">
+            <div class="progress-icon-wrap">
+                <div class="progress-ring">
+                    <svg viewBox="0 0 100 100" class="ring-svg">
+                        <circle cx="50" cy="50" r="42" class="ring-bg"/>
+                        <circle cx="50" cy="50" r="42" class="ring-fill" id="ring-fill-circle"/>
+                    </svg>
+                    <span class="ring-percent" id="ring-percent">0%</span>
+                </div>
+            </div>
+            <div class="progress-info">
+                <h3 id="progress-title">Preparing download…</h3>
+                <p id="progress-subtitle" class="progress-subtitle">Starting up, please wait</p>
+            </div>
+            <div class="progress-bar-wrap">
+                <div class="progress-bar-track">
+                    <div class="progress-bar-fill" id="progress-bar-fill"></div>
+                    <div class="progress-bar-shine"></div>
+                </div>
+            </div>
+            <div class="progress-stats" id="progress-stats">
+                <div class="stat-pill" id="stat-speed"><i class="fa-solid fa-gauge-high"></i> <span>—</span></div>
+                <div class="stat-pill" id="stat-eta"><i class="fa-solid fa-clock"></i> <span>—</span></div>
+                <div class="stat-pill" id="stat-size"><i class="fa-solid fa-database"></i> <span>—</span></div>
+            </div>
+            <button class="progress-cancel-btn" id="progress-cancel-btn">
+                <i class="fa-solid fa-xmark"></i> Cancel
+            </button>
+        </div>
+    </div>
 
     <!-- Scripts -->
     <script src="app.js"></script>

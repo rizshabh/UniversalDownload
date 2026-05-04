@@ -4,6 +4,7 @@ const { spawn, execSync } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const { randomUUID } = require('crypto');
+const puppeteer = require('puppeteer');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -11,190 +12,385 @@ const PORT = process.env.PORT || 3000;
 // ─── Middleware ────────────────────────────────────────────────────────────────
 app.use(cors());
 app.use(express.json());
-app.use(express.static(__dirname)); // Serve frontend files
+app.use(express.static(__dirname));
 
-// ─── Temp directory for downloads ──────────────────────────────────────────────
+// ─── Temp directory ────────────────────────────────────────────────────────────
 const TMP_DIR = path.join(__dirname, 'tmp_downloads');
 if (!fs.existsSync(TMP_DIR)) fs.mkdirSync(TMP_DIR);
 
-// ─── Helper: find yt-dlp binary ────────────────────────────────────────────────
+// ─── Job store ─────────────────────────────────────────────────────────────────
+const jobs = new Map();
+
+// ─── Find yt-dlp ──────────────────────────────────────────────────────────────
 function getYtDlpPath() {
     try {
-        const result = execSync('where yt-dlp', { encoding: 'utf8' }).trim().split('\n')[0].trim();
-        if (result) return result;
+        const r = execSync('where yt-dlp', { encoding: 'utf8' }).trim().split('\n')[0].trim();
+        if (r) return r;
     } catch (_) {}
-    // Common fallback paths
-    const fallbacks = [
-        'yt-dlp',
-        'yt-dlp.exe',
-        path.join(process.env.LOCALAPPDATA || '', 'Programs', 'yt-dlp', 'yt-dlp.exe'),
-    ];
-    for (const fb of fallbacks) {
+    for (const fb of ['yt-dlp', 'yt-dlp.exe',
+        path.join(process.env.LOCALAPPDATA || '', 'Programs', 'yt-dlp', 'yt-dlp.exe')]) {
         try { execSync(`"${fb}" --version`, { encoding: 'utf8' }); return fb; } catch (_) {}
     }
     return 'yt-dlp';
 }
-
 const YT_DLP = getYtDlpPath();
-console.log(`✅ yt-dlp found at: ${YT_DLP}`);
+console.log(`✅ yt-dlp: ${YT_DLP}`);
 
-// ─── Cleanup old temp files every 10 minutes ───────────────────────────────────
+// ─── Check ffmpeg ──────────────────────────────────────────────────────────────
+function hasFfmpeg() {
+    try { execSync('ffmpeg -version', { encoding: 'utf8', stdio: 'ignore' }); return true; } catch (_) { return false; }
+}
+const HAS_FFMPEG = hasFfmpeg();
+console.log(HAS_FFMPEG ? '✅ ffmpeg found' : '⚠️  ffmpeg NOT found — quality will be limited');
+
+// ─── yt-dlp arg sets ──────────────────────────────────────────────────────
+// INFO: No extractor-args → yt-dlp uses its own best client (returns ALL qualities)
+// Using --extractor-args with 'web' was breaking info fetch due to YouTube anti-bot
+const INFO_ARGS = [
+    '--no-playlist', '--no-warnings', '--no-check-certificate',
+];
+
+// DOWNLOAD: no extractor-args — android client only has 360p muxed streams
+// yt-dlp's default client has ALL streams including 4K
+const DL_ARGS = [
+    '--no-playlist', '--no-warnings', '--no-check-certificate',
+    '--concurrent-fragments', '4',
+    '--buffer-size', '1M',
+    '--newline',
+];
+
+// ─── Cleanup every 10 minutes ─────────────────────────────────────────────────
 setInterval(() => {
     try {
-        const files = fs.readdirSync(TMP_DIR);
         const now = Date.now();
-        files.forEach(f => {
+        fs.readdirSync(TMP_DIR).forEach(f => {
             const fp = path.join(TMP_DIR, f);
-            const stat = fs.statSync(fp);
-            if (now - stat.mtimeMs > 10 * 60 * 1000) {
-                fs.unlinkSync(fp);
-            }
+            if (now - fs.statSync(fp).mtimeMs > 10 * 60 * 1000) fs.unlinkSync(fp);
         });
     } catch (_) {}
+    for (const [id, job] of jobs.entries()) {
+        if ((job.status === 'done' || job.status === 'error') &&
+            Date.now() - job.createdAt > 10 * 60 * 1000) jobs.delete(id);
+    }
 }, 10 * 60 * 1000);
 
-// ─── Route: GET video info (for quality selection) ─────────────────────────────
+// ─── Puppeteer Stream Extractor ───────────────────────────────────────────────
+async function extractStreamUrl(url) {
+    let browser;
+    try {
+        browser = await puppeteer.launch({
+            headless: 'new',
+            args: [
+                '--no-sandbox', 
+                '--disable-setuid-sandbox', 
+                '--disable-web-security',
+                '--disable-dev-shm-usage'
+            ]
+        });
+        const page = await browser.newPage();
+        
+        await page.setRequestInterception(true);
+        page.on('request', req => {
+            const rt = req.resourceType();
+            if (['image', 'stylesheet', 'font'].includes(rt)) {
+                req.abort();
+            } else {
+                req.continue();
+            }
+        });
+
+        let streamUrl = null;
+        page.on('request', request => {
+            const reqUrl = request.url();
+            if ((reqUrl.includes('.m3u8') || reqUrl.includes('.mp4') || reqUrl.includes('.flv')) && !reqUrl.includes('ad')) {
+                if (!streamUrl) streamUrl = reqUrl;
+            }
+        });
+
+        await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 15000 });
+        
+        try {
+            await page.evaluate(() => {
+                const v = document.querySelector('video');
+                if (v) v.play();
+                const b = document.querySelector('.play-btn, .vjs-play-control, iframe');
+                if (b) b.click();
+            });
+        } catch(e) {}
+
+        await new Promise(r => setTimeout(r, 4000));
+        await browser.close();
+        return streamUrl;
+    } catch (e) {
+        if (browser) await browser.close();
+        return null;
+    }
+}
+
+// ─── GET /api/info ────────────────────────────────────────────────────────────
 app.post('/api/info', async (req, res) => {
     const { url } = req.body;
     if (!url) return res.status(400).json({ error: 'URL is required' });
 
-    const args = [
-        '--dump-json',
-        '--no-playlist',
-        '--no-warnings',
-        url
-    ];
-
-    let data = '';
-    let errData = '';
-
-    const proc = spawn(YT_DLP, args);
-    proc.stdout.on('data', d => data += d.toString());
-    proc.stderr.on('data', d => errData += d.toString());
-
-    proc.on('close', code => {
-        if (code !== 0 || !data.trim()) {
-            return res.status(400).json({ error: 'Could not fetch video info. The URL might be invalid, private, or from an unsupported platform.' });
-        }
-        try {
-            const info = JSON.parse(data.trim().split('\n')[0]); // parse first JSON object
-            const formats = (info.formats || [])
-                .filter(f => f.ext && f.ext !== 'mhtml')
-                .map(f => ({
-                    format_id: f.format_id,
-                    ext: f.ext,
-                    quality: f.format_note || f.resolution || f.quality || '',
-                    width: f.width,
-                    height: f.height,
-                    filesize: f.filesize,
-                    vcodec: f.vcodec,
-                    acodec: f.acodec,
-                }));
-
-            res.json({
-                title: info.title || 'Video',
-                thumbnail: info.thumbnail || null,
-                duration: info.duration || null,
-                platform: info.extractor_key || 'Unknown',
-                formats
-            });
-        } catch (e) {
-            res.status(500).json({ error: 'Failed to parse video info.' });
-        }
-    });
-});
-
-// ─── Route: Download and stream to client ─────────────────────────────────────
-app.get('/api/download', (req, res) => {
-    const { url, type } = req.query; // type: 'video' or 'audio'
-    if (!url) return res.status(400).json({ error: 'URL is required' });
-
-    const isAudio = type === 'audio';
-    const fileId = randomUUID();
-    const ext = isAudio ? 'mp3' : 'mp4';
-    const outputPath = path.join(TMP_DIR, `${fileId}.%(ext)s`);
-    const finalPath = path.join(TMP_DIR, `${fileId}.${ext}`);
-
-    let args;
-
-    if (isAudio) {
-        args = [
-            '-f', 'bestaudio/best',
-            '-x',
-            '--audio-format', 'mp3',
-            '--audio-quality', '0',
-            '--no-playlist',
-            '--no-warnings',
-            '-o', outputPath,
-            url
-        ];
-    } else {
-        args = [
-            '-f', 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best',
-            '--merge-output-format', 'mp4',
-            '--no-playlist',
-            '--no-warnings',
-            '-o', outputPath,
-            url
-        ];
+    function fetchInfo(targetUrl, isStream = false) {
+        let data = '', err = '';
+        const proc = spawn(YT_DLP, ['--dump-json', ...INFO_ARGS, targetUrl]);
+        proc.stdout.on('data', d => data += d);
+        proc.stderr.on('data', d => err += d);
+        proc.on('close', async code => {
+            if (code !== 0 || !data.trim()) {
+                if (!isStream) {
+                    console.log('yt-dlp failed, attempting puppeteer fallback for:', targetUrl);
+                    const streamUrl = await extractStreamUrl(targetUrl);
+                    if (streamUrl) {
+                        console.log('Puppeteer found stream:', streamUrl);
+                        return fetchInfo(streamUrl, true);
+                    }
+                }
+                return res.status(400).json({ error: 'Could not fetch video info. URL may be invalid, private, or unsupported.' });
+            }
+            try {
+                const info = JSON.parse(data.trim().split('\n')[0]);
+                const formats = (info.formats || [])
+                    .filter(f => f.ext && f.ext !== 'mhtml')
+                    .map(f => ({
+                        format_id: f.format_id,
+                        ext: f.ext,
+                        quality: f.format_note || f.resolution || '',
+                        width: f.width,
+                        height: f.height,
+                        filesize: f.filesize || null,
+                        vcodec: f.vcodec,
+                        acodec: f.acodec,
+                    }));
+                res.json({
+                    title: info.title || 'Video',
+                    thumbnail: info.thumbnail || null,
+                    duration: info.duration || null,
+                    platform: info.extractor_key || 'Unknown',
+                    formats,
+                    streamUrl: isStream ? targetUrl : undefined
+                });
+            } catch (e) {
+                res.status(500).json({ error: 'Failed to parse video info.' });
+            }
+        });
     }
 
-    console.log(`⬇️  Downloading [${type}]: ${url}`);
+    fetchInfo(url, false);
+});
 
-    let errData = '';
+// ─── POST /api/start-download ─────────────────────────────────────────────────
+app.post('/api/start-download', (req, res) => {
+    // ✅ Destructure height (not format_id) — height works across all yt-dlp clients
+    const { url, type, height } = req.body;
+    if (!url) return res.status(400).json({ error: 'URL is required' });
+
+    const jobId  = randomUUID();
+    const fileId = randomUUID();
+    const isAudio = type === 'audio';
+
+    const job = {
+        jobId, status: 'pending',
+        percent: 0, speed: '', eta: '', size: '',
+        filePath: null, error: null,
+        sseClients: [],
+        _fileId: fileId,
+        _type: isAudio ? 'audio' : 'video',
+        createdAt: Date.now(),
+    };
+    jobs.set(jobId, job);
+
+    function broadcast(payload) {
+        job.sseClients.forEach(c => {
+            try { c.write(`data: ${JSON.stringify(payload)}\n\n`); } catch (_) {}
+        });
+    }
+
+    // ─── Progress line parser ─────────────────────────────────────────────────
+    // yt-dlp outputs: [download]  45.3% of ~123.45MiB at 3.21MiB/s ETA 00:32
+    const progressRe = /\[download\]\s+([\d.]+)%(?:\s+of\s+~?\s*([\d.]+\s*\S+))?\s+at\s+([\d.]+\s*\S+\/s)\s+ETA\s+(\S+)/;
+    const mergeRe    = /\[Merger\]|\[ffmpeg\]|Merging formats/i;
+
+    function parseLine(line) {
+        const m = line.match(progressRe);
+        if (m) {
+            job.percent = parseFloat(m[1]);
+            if (m[2]) job.size = m[2].trim();
+            job.speed = m[3] ? m[3].trim() : job.speed;
+            job.eta   = m[4] ? m[4].trim() : job.eta;
+            job.status = 'downloading';
+            broadcast({ status: 'downloading', percent: job.percent, speed: job.speed, eta: job.eta, size: job.size });
+        } else if (mergeRe.test(line)) {
+            job.status = 'processing';
+            broadcast({ status: 'processing', percent: 99 });
+        }
+    }
+
+    // ─── Build yt-dlp args ────────────────────────────────────────────────────
+    let args;
+    if (isAudio) {
+        // ✅ Fixed: explicit .mp3 output path so file-finder works after --extract-audio renames it
+        const outPath = path.join(TMP_DIR, `${fileId}.mp3`);
+        if (HAS_FFMPEG) {
+            args = [
+                '-f', 'bestaudio/best',
+                '--extract-audio', '--audio-format', 'mp3', '--audio-quality', '0',
+                ...DL_ARGS,
+                '-o', outPath, url,
+            ];
+        } else {
+            args = [
+                '-f', 'bestaudio[ext=m4a]/bestaudio/best',
+                ...DL_ARGS,
+                '-o', outPath, url,
+            ];
+        }
+        job._expectedPath = outPath;
+    } else {
+        if (HAS_FFMPEG) {
+            // ✅ Height-based: bestvideo[height<=N] works across all yt-dlp clients
+            const fmt = height
+                ? `bestvideo[height<=${height}][ext=mp4]+bestaudio/bestvideo[height<=${height}]+bestaudio/best`
+                : 'bestvideo[ext=mp4]+bestaudio/bestvideo+bestaudio/best';
+            args = [
+                '-f', fmt,
+                '--merge-output-format', 'mp4',
+                ...DL_ARGS,
+                '-o', path.join(TMP_DIR, `${fileId}.%(ext)s`), url,
+            ];
+        } else {
+            const fmt = height
+                ? `best[height<=${height}][ext=mp4]/best[height<=${height}]/best`
+                : 'best[ext=mp4]/best';
+            args = [
+                '-f', fmt,
+                ...DL_ARGS,
+                '-o', path.join(TMP_DIR, `${fileId}.%(ext)s`), url,
+            ];
+        }
+    }
+
+    console.log(`⬇️  [${job._type.toUpperCase()}] job=${jobId} height=${height || 'best'}`);
+
+
     const proc = spawn(YT_DLP, args);
-    proc.stderr.on('data', d => { errData += d.toString(); });
+    job._proc = proc;
+
+    let stderr = '';
+    proc.stdout.on('data', d => d.toString().split('\n').forEach(l => l.trim() && parseLine(l)));
+    proc.stderr.on('data', d => {
+        const t = d.toString();
+        stderr += t;
+        process.stdout.write(d);
+        t.split('\n').forEach(l => l.trim() && parseLine(l));
+    });
+
+    const killTimer = setTimeout(() => {
+        proc.kill('SIGTERM');
+        job.status = 'error';
+        job.error  = 'Timed out — video too large or network too slow.';
+        broadcast({ status: 'error', error: job.error });
+    }, 15 * 60 * 1000);
 
     proc.on('close', code => {
+        clearTimeout(killTimer);
         if (code !== 0) {
-            console.error('yt-dlp error:', errData);
-            if (!res.headersSent) {
-                return res.status(500).json({ error: 'Download failed. ' + errData.slice(0, 200) });
-            }
+            job.status = 'error';
+            job.error  = `Download failed (exit ${code}). ` + stderr.slice(-400);
+            broadcast({ status: 'error', error: job.error });
             return;
         }
 
-        // Find the actual downloaded file
-        let downloadedFile = finalPath;
-        if (!fs.existsSync(downloadedFile)) {
-            // Search for any file with the fileId prefix
-            const files = fs.readdirSync(TMP_DIR).filter(f => f.startsWith(fileId));
-            if (files.length > 0) {
-                downloadedFile = path.join(TMP_DIR, files[0]);
-            } else {
-                return res.status(500).json({ error: 'Downloaded file not found.' });
-            }
+        // Find completed file — check explicit path first (audio), then scan directory
+        let foundFile = null;
+        if (job._expectedPath && fs.existsSync(job._expectedPath)) {
+            foundFile = path.basename(job._expectedPath);
+        } else {
+            const files = fs.readdirSync(TMP_DIR).filter(f =>
+                f.startsWith(fileId) && !f.endsWith('.part') && !f.endsWith('.ytdl') && !f.endsWith('.json')
+            );
+            if (files.length) foundFile = files[0];
         }
 
-        const filename = `download_${Date.now()}.${isAudio ? 'mp3' : 'mp4'}`;
-        const stat = fs.statSync(downloadedFile);
+        if (!foundFile) {
+            job.status = 'error';
+            job.error  = 'Output file not found after download.';
+            broadcast({ status: 'error', error: job.error });
+            return;
+        }
 
-        res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-        res.setHeader('Content-Type', isAudio ? 'audio/mpeg' : 'video/mp4');
-        res.setHeader('Content-Length', stat.size);
-
-        const fileStream = fs.createReadStream(downloadedFile);
-        fileStream.pipe(res);
-
-        fileStream.on('close', () => {
-            // Cleanup after sending
-            try { fs.unlinkSync(downloadedFile); } catch (_) {}
-        });
-
-        fileStream.on('error', err => {
-            console.error('Stream error:', err);
-            try { fs.unlinkSync(downloadedFile); } catch (_) {}
-        });
+        job.filePath = path.join(TMP_DIR, foundFile);
+        job.status   = 'done';
+        job.percent  = 100;
+        broadcast({ status: 'done', percent: 100, fetchUrl: `/api/fetch/${jobId}` });
+        console.log(`✅ Done: ${job.filePath}`);
     });
 
-    // Handle client disconnect
+    res.json({ jobId });
+});
+
+// ─── GET /api/progress/:jobId  (SSE) ─────────────────────────────────────────
+app.get('/api/progress/:jobId', (req, res) => {
+    const job = jobs.get(req.params.jobId);
+    if (!job) return res.status(404).json({ error: 'Job not found' });
+
+    res.setHeader('Content-Type',  'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection',    'keep-alive');
+    res.flushHeaders();
+
+    // Send current snapshot immediately
+    res.write(`data: ${JSON.stringify({
+        status: job.status, percent: job.percent,
+        speed: job.speed, eta: job.eta, size: job.size,
+    })}\n\n`);
+
+    if (job.status === 'done') {
+        res.write(`data: ${JSON.stringify({ status: 'done', percent: 100, fetchUrl: `/api/fetch/${req.params.jobId}` })}\n\n`);
+        return res.end();
+    }
+    if (job.status === 'error') {
+        res.write(`data: ${JSON.stringify({ status: 'error', error: job.error })}\n\n`);
+        return res.end();
+    }
+
+    job.sseClients.push(res);
+    const ping = setInterval(() => { try { res.write(': ping\n\n'); } catch (_) {} }, 20000);
     req.on('close', () => {
-        proc.kill('SIGTERM');
+        clearInterval(ping);
+        job.sseClients = job.sseClients.filter(c => c !== res);
     });
 });
 
-// ─── Start server ─────────────────────────────────────────────────────────────
-app.listen(PORT, () => {
-    console.log(`\n🚀 UniDownloader server running at http://localhost:${PORT}`);
-    console.log(`   Open your browser and go to: http://localhost:${PORT}\n`);
+// ─── GET /api/fetch/:jobId ────────────────────────────────────────────────────
+app.get('/api/fetch/:jobId', (req, res) => {
+    const job = jobs.get(req.params.jobId);
+    if (!job)                              return res.status(404).json({ error: 'Job not found' });
+    if (job.status !== 'done' || !job.filePath) return res.status(400).json({ error: 'File not ready' });
+    if (!fs.existsSync(job.filePath))     return res.status(410).json({ error: 'File already cleaned up' });
+
+    const ext  = path.extname(job.filePath).replace('.', '') || (job._type === 'audio' ? 'mp3' : 'mp4');
+    const name = `${job._type}_${Date.now()}.${ext}`;
+    const size = fs.statSync(job.filePath).size;
+
+    const MIME = {
+        mp4: 'video/mp4', webm: 'video/webm', mkv: 'video/x-matroska',
+        mp3: 'audio/mpeg', m4a: 'audio/mp4', ogg: 'audio/ogg', opus: 'audio/ogg',
+    };
+    const mime = MIME[ext] || (job._type === 'audio' ? 'audio/mpeg' : 'video/mp4');
+
+    res.setHeader('Content-Disposition', `attachment; filename="${name}"`);
+    res.setHeader('Content-Type', mime);
+    res.setHeader('Content-Length', size);
+
+    const stream = fs.createReadStream(job.filePath);
+    stream.pipe(res);
+    stream.on('close', () => {
+        try { fs.unlinkSync(job.filePath); } catch (_) {}
+        jobs.delete(job.jobId);
+    });
 });
+
+// ─── Start ────────────────────────────────────────────────────────────────────
+app.listen(PORT, () => console.log(`\n🚀 UniDownloader → http://localhost:${PORT}\n`));
