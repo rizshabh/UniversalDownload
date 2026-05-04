@@ -46,10 +46,20 @@ const HAS_FFMPEG = hasFfmpeg();
 console.log(HAS_FFMPEG ? '✅ ffmpeg found' : '⚠️  ffmpeg NOT found — quality will be limited');
 
 // ─── yt-dlp arg sets ──────────────────────────────────────────────────────
+let cookiesArg = [];
+const cookiesPath = path.join(__dirname, 'cookies.txt');
+if (fs.existsSync(cookiesPath)) {
+    cookiesArg = ['--cookies', cookiesPath];
+    console.log('✅ Found cookies.txt - passing to yt-dlp');
+} else {
+    console.log('⚠️  No cookies.txt found - YouTube may block downloads from Datacenter IPs');
+}
+
 // INFO: No extractor-args → yt-dlp uses its own best client (returns ALL qualities)
 // Using --extractor-args with 'web' was breaking info fetch due to YouTube anti-bot
 const INFO_ARGS = [
     '--no-playlist', '--no-warnings', '--no-check-certificate',
+    ...cookiesArg
 ];
 
 // DOWNLOAD: no extractor-args — android client only has 360p muxed streams
@@ -59,6 +69,7 @@ const DL_ARGS = [
     '--concurrent-fragments', '4',
     '--buffer-size', '1M',
     '--newline',
+    ...cookiesArg
 ];
 
 // ─── Cleanup every 10 minutes ─────────────────────────────────────────────────
