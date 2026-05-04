@@ -1,4 +1,4 @@
-FROM node:18-bullseye-slim
+FROM node:20-bookworm-slim
 
 # Install necessary system dependencies for Puppeteer, ffmpeg, and yt-dlp
 RUN apt-get update && apt-get install -y \
