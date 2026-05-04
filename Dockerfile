@@ -9,8 +9,8 @@ RUN apt-get update && apt-get install -y \
     chromium \
     && rm -rf /var/lib/apt/lists/*
 
-# Install yt-dlp binary
-RUN wget -qO /usr/local/bin/yt-dlp https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp && \
+# Install yt-dlp binary (Using Nightly build for latest YouTube patches)
+RUN wget -qO /usr/local/bin/yt-dlp https://github.com/yt-dlp/yt-dlp-nightly-builds/releases/latest/download/yt-dlp && \
     chmod a+rx /usr/local/bin/yt-dlp
 
 # Tell Puppeteer to use the installed Chromium
