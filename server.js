@@ -59,7 +59,7 @@ if (fs.existsSync(cookiesPath)) {
 // Using --extractor-args with 'web' was breaking info fetch due to YouTube anti-bot
 const INFO_ARGS = [
     '--no-playlist', '--no-warnings', '--no-check-certificate',
-    '--extractor-args', 'youtube:client=ios,android,tv',
+    '--extractor-args', 'youtube:player_client=android,web;client=android,ios',
     ...cookiesArg
 ];
 
@@ -67,7 +67,7 @@ const INFO_ARGS = [
 // yt-dlp's default client has ALL streams including 4K
 const DL_ARGS = [
     '--no-playlist', '--no-warnings', '--no-check-certificate',
-    '--extractor-args', 'youtube:client=ios,android,tv',
+    '--extractor-args', 'youtube:player_client=android,web;client=android,ios',
     '--concurrent-fragments', '4',
     '--buffer-size', '1M',
     '--newline',
@@ -189,8 +189,15 @@ async function fetchTeraboxInfo(targetUrl) {
 
 // ─── GET /api/info ────────────────────────────────────────────────────────────
 app.post('/api/info', async (req, res) => {
-    const { url } = req.body;
+    let { url } = req.body;
     if (!url) return res.status(400).json({ error: 'URL is required' });
+
+    // 🔴 Convert YouTube Shorts to standard watch URLs (Bypasses aggressive Shorts bot detection)
+    if (url.includes('youtube.com/shorts/')) {
+        const videoId = url.split('/shorts/')[1].split('?')[0];
+        url = `https://www.youtube.com/watch?v=${videoId}`;
+        console.log(`🔄 Converted Shorts URL to standard watch URL: ${url}`);
+    }
 
     // Intercept Terabox URLs and use the paid API instead of yt-dlp/puppeteer
     if (url.includes('terabox.com') || url.includes('teraboxapp.com') || url.includes('1024tera.com')) {
@@ -256,9 +263,14 @@ app.post('/api/info', async (req, res) => {
 
 // ─── POST /api/start-download ─────────────────────────────────────────────────
 app.post('/api/start-download', (req, res) => {
-    // ✅ Destructure height (not format_id) — height works across all yt-dlp clients
-    const { url, type, height } = req.body;
+    let { url, type, height } = req.body;
     if (!url) return res.status(400).json({ error: 'URL is required' });
+
+    // 🔴 Convert YouTube Shorts to standard watch URLs for download
+    if (url.includes('youtube.com/shorts/')) {
+        const videoId = url.split('/shorts/')[1].split('?')[0];
+        url = `https://www.youtube.com/watch?v=${videoId}`;
+    }
 
     const jobId  = randomUUID();
     const fileId = randomUUID();
