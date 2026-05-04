@@ -59,6 +59,7 @@ if (fs.existsSync(cookiesPath)) {
 // Using --extractor-args with 'web' was breaking info fetch due to YouTube anti-bot
 const INFO_ARGS = [
     '--no-playlist', '--no-warnings', '--no-check-certificate',
+    '--extractor-args', 'youtube:client=ios,android,tv',
     ...cookiesArg
 ];
 
@@ -66,6 +67,7 @@ const INFO_ARGS = [
 // yt-dlp's default client has ALL streams including 4K
 const DL_ARGS = [
     '--no-playlist', '--no-warnings', '--no-check-certificate',
+    '--extractor-args', 'youtube:client=ios,android,tv',
     '--concurrent-fragments', '4',
     '--buffer-size', '1M',
     '--newline',
