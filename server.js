@@ -6,6 +6,15 @@ const fs = require('fs');
 const { randomUUID } = require('crypto');
 const puppeteer = require('puppeteer');
 
+// ─── Global crash guards ──────────────────────────────────────────────────────
+// Prevent Railway from seeing non-zero exit code and restarting the server
+process.on('uncaughtException', (err) => {
+    console.error('[uncaughtException] Server kept alive:', err.message);
+});
+process.on('unhandledRejection', (reason) => {
+    console.error('[unhandledRejection] Server kept alive:', reason);
+});
+
 const app = express();
 const PORT = process.env.PORT || 3000;
 
@@ -55,18 +64,22 @@ if (fs.existsSync(cookiesPath)) {
     console.log('⚠️  No cookies.txt found - YouTube may block downloads from Datacenter IPs');
 }
 
-// INFO: tv_embedded client — bypasses bot detection on datacenter IPs (no PO-token needed)
-// android/android_vr fail on Railway/Render. tv_embedded is the most reliable alternative.
-const INFO_ARGS = [
+// INFO: tv_embedded — most reliable client for datacenter IPs (no PO-token)
+const INFO_ARGS_0 = [
     '--no-playlist', '--no-warnings', '--no-check-certificate',
     '--no-cache-dir', '--socket-timeout', '30',
     '--extractor-args', 'youtube:player_client=tv_embedded',
     ...cookiesArg
 ];
-
-// Fallback: no extractor-args — yt-dlp picks best available client with cookies
-// When cookies are valid, yt-dlp's default client selection often bypasses DC detection
-const INFO_ARGS_FALLBACK = [
+// Attempt 1 fallback: web_embedded (different embed context, different detection)
+const INFO_ARGS_1 = [
+    '--no-playlist', '--no-warnings', '--no-check-certificate',
+    '--no-cache-dir', '--socket-timeout', '30',
+    '--extractor-args', 'youtube:player_client=web_embedded',
+    ...cookiesArg
+];
+// Attempt 2 fallback: let yt-dlp auto-select with cookies (picks safest available)
+const INFO_ARGS_2 = [
     '--no-playlist', '--no-warnings', '--no-check-certificate',
     '--no-cache-dir', '--socket-timeout', '30',
     ...cookiesArg
@@ -100,21 +113,31 @@ setInterval(() => {
 }, 10 * 60 * 1000);
 
 // ─── Puppeteer Stream Extractor ───────────────────────────────────────────────
+// NOTE: Only used for third-party streaming sites (e.g. MegaCloud, RabbitStream).
+// NEVER call for youtube.com / youtu.be — Chromium cannot authenticate with YouTube
+// and launching it on Railway OOMs the container.
 async function extractStreamUrl(url) {
+    // Safety guard: absolutely never use puppeteer for YouTube
+    if (url.includes('youtube.com') || url.includes('youtu.be')) {
+        console.log('Puppeteer skipped for YouTube URL (unsupported)');
+        return null;
+    }
     let browser;
     try {
         browser = await puppeteer.launch({
-            headless: 'new',
+            headless: true,
             executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
             args: [
-                '--no-sandbox', 
-                '--disable-setuid-sandbox', 
+                '--no-sandbox',
+                '--disable-setuid-sandbox',
                 '--disable-web-security',
-                '--disable-dev-shm-usage'
+                '--disable-dev-shm-usage',
+                '--disable-gpu',
+                '--single-process'
             ]
         });
         const page = await browser.newPage();
-        
+
         await page.setRequestInterception(true);
         page.on('request', req => {
             const rt = req.resourceType();
@@ -134,18 +157,14 @@ async function extractStreamUrl(url) {
         });
 
         await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 15000 });
-        
+
         try {
-            // 1. Click around the main page to load iframes
             await page.evaluate(() => {
                 document.body.click();
                 const buttons = document.querySelectorAll('.play-btn, iframe, #play, .server-item');
                 buttons.forEach(b => { try { b.click(); } catch(e){} });
             });
-
             await new Promise(r => setTimeout(r, 2000));
-
-            // 2. Inject click/play logic into EVERY iframe (Bypasses MegaCloud/RabbitStream embeds)
             for (const frame of page.frames()) {
                 try {
                     await frame.evaluate(() => {
@@ -159,12 +178,12 @@ async function extractStreamUrl(url) {
             }
         } catch(e) {}
 
-        // Wait for the .m3u8 stream request to fire
         await new Promise(r => setTimeout(r, 8000));
         await browser.close();
         return streamUrl;
     } catch (e) {
-        if (browser) await browser.close();
+        console.error('Puppeteer error:', e.message);
+        try { if (browser) await browser.close(); } catch(_) {}
         return null;
     }
 }
@@ -241,26 +260,29 @@ app.post('/api/info', async (req, res) => {
 
     function fetchInfo(targetUrl, isStream = false, retryAttempt = 0) {
         let data = '', err = '';
-        
-        // retryAttempt 0 = ios client, 1 = tv_embedded fallback
-        const isYouTube = targetUrl.includes('youtube.com') || targetUrl.includes('youtu.be');
-        let currentArgs = (retryAttempt === 1 && isYouTube) ? [...INFO_ARGS_FALLBACK] : [...INFO_ARGS];
 
+        const isYouTube = targetUrl.includes('youtube.com') || targetUrl.includes('youtu.be');
+        // 3-tier YouTube client ladder: tv_embedded → web_embedded → auto-select
+        const argSets = [INFO_ARGS_0, INFO_ARGS_1, INFO_ARGS_2];
+        const currentArgs = (isYouTube && retryAttempt <= 2) ? [...argSets[retryAttempt]] : [...INFO_ARGS_2];
+
+        console.log(`[fetchInfo] attempt=${retryAttempt} url=${targetUrl}`);
         const proc = spawn(YT_DLP, ['--dump-json', ...currentArgs, targetUrl]);
         proc.stdout.on('data', d => data += d);
         proc.stderr.on('data', d => err += d);
         proc.on('close', async code => {
             if (code !== 0 || !data.trim()) {
-                console.error(`\n❌ yt-dlp info fetch failed for ${targetUrl}`);
-                console.error(`Exit Code: ${code}`);
-                console.error(`Error Output: ${err}\n`);
+                console.error(`yt-dlp info failed (attempt ${retryAttempt}) for ${targetUrl}`);
+                console.error(`Exit code: ${code} | stderr: ${err.slice(0, 300)}`);
 
-                if (retryAttempt === 0 && (targetUrl.includes('youtube.com') || targetUrl.includes('youtu.be'))) {
-                    console.log('Retrying with yt-dlp default client (no extractor-args + cookies)...');
-                    return fetchInfo(targetUrl, isStream, 1);
+                // YouTube: try next client in the ladder (up to 2 retries)
+                if (isYouTube && retryAttempt < 2) {
+                    console.log(`Retrying YouTube with client tier ${retryAttempt + 1}...`);
+                    return fetchInfo(targetUrl, isStream, retryAttempt + 1);
                 }
 
-                if (!isStream) {
+                // Non-YouTube: try puppeteer (streaming sites with .m3u8 / .mp4 direct links)
+                if (!isStream && !isYouTube) {
                     console.log('yt-dlp failed, attempting puppeteer fallback for:', targetUrl);
                     const streamUrl = await extractStreamUrl(targetUrl);
                     if (streamUrl) {
@@ -268,7 +290,8 @@ app.post('/api/info', async (req, res) => {
                         return fetchInfo(streamUrl, true, 0);
                     }
                 }
-                return res.status(400).json({ error: 'Could not fetch video info. URL may be invalid, private, or unsupported. Check server logs.' });
+
+                return res.status(400).json({ error: 'Could not fetch video info. URL may be invalid, private, or unsupported.' });
             }
             try {
                 const info = JSON.parse(data.trim().split('\n')[0]);
