@@ -130,14 +130,20 @@ async function extractStreamUrl(url) {
         
         try {
             await page.evaluate(() => {
+                // Try to click anywhere on the page to trigger popups/play
+                document.body.click();
+                
                 const v = document.querySelector('video');
                 if (v) v.play();
-                const b = document.querySelector('.play-btn, .vjs-play-control, iframe');
-                if (b) b.click();
+                
+                // Common play button classes on custom/pirate sites
+                const buttons = document.querySelectorAll('.play-btn, .vjs-play-control, .plyr__control, .jw-icon-display, iframe, #play');
+                buttons.forEach(b => { try { b.click(); } catch(e){} });
             });
         } catch(e) {}
 
-        await new Promise(r => setTimeout(r, 4000));
+        // Wait longer for Cloudflare or heavy obfuscation scripts to load the stream
+        await new Promise(r => setTimeout(r, 8000));
         await browser.close();
         return streamUrl;
     } catch (e) {
