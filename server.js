@@ -64,44 +64,43 @@ if (fs.existsSync(cookiesPath)) {
     console.log('⚠️  No cookies.txt found - YouTube may block downloads from Datacenter IPs');
 }
 
-// INFO: 3-tier client ladder for Railway/datacenter IPs
-// web_creator is less flagged than tv_embedded; User-Agent makes requests look like real Chrome
+// INFO: 4-tier client ladder for YouTube (Railway/DC IP bypass)
 const YT_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
 
-const INFO_ARGS_0 = [
-    '--no-playlist', '--no-warnings', '--no-check-certificate',
-    '--no-cache-dir', '--socket-timeout', '30',
-    '--extractor-args', 'youtube:player_client=web_creator',
-    '--add-header', `User-Agent:${YT_UA}`,
-    ...cookiesArg
-];
-// Tier 1: tv_embedded — different embed context, harder to fingerprint from DC
-const INFO_ARGS_1 = [
-    '--no-playlist', '--no-warnings', '--no-check-certificate',
-    '--no-cache-dir', '--socket-timeout', '30',
-    '--extractor-args', 'youtube:player_client=tv_embedded',
-    '--add-header', `User-Agent:${YT_UA}`,
-    ...cookiesArg
-];
-// Tier 2: yt-dlp auto-select with cookies + user-agent (last resort)
-const INFO_ARGS_2 = [
-    '--no-playlist', '--no-warnings', '--no-check-certificate',
-    '--no-cache-dir', '--socket-timeout', '30',
-    '--add-header', `User-Agent:${YT_UA}`,
-    ...cookiesArg
-];
+function getInfoArgs(attempt, isYouTube) {
+    const base = [
+        '--no-playlist', '--no-warnings', '--no-check-certificate',
+        '--no-cache-dir', '--socket-timeout', '30',
+        '--add-header', `User-Agent:${YT_UA}`,
+        '--js-runtimes', 'node'
+    ];
+    
+    if (!isYouTube) return [...base, ...cookiesArg];
 
-// DOWNLOAD: no extractor-args — android client only has 360p muxed streams
-// yt-dlp's default client has ALL streams including 4K
-const DL_ARGS = [
-    '--no-playlist', '--no-warnings', '--no-check-certificate',
-    '--no-cache-dir',
-    '-S', 'vcodec:h264,res,acodec:m4a',
-    '--concurrent-fragments', '4',
-    '--buffer-size', '1M',
-    '--newline',
-    ...cookiesArg
-];
+    // Attempt 0: tv_embedded + cookies
+    if (attempt === 0) return [...base, '--extractor-args', 'youtube:player_client=tv_embedded', ...cookiesArg];
+    // Attempt 1: web_creator + cookies
+    if (attempt === 1) return [...base, '--extractor-args', 'youtube:player_client=web_creator', ...cookiesArg];
+    // Attempt 2: default + cookies
+    if (attempt === 2) return [...base, ...cookiesArg];
+    // Attempt 3: default + NO cookies (fixes cases where flagged cookies block public videos)
+    return base;
+}
+
+function getDownloadArgs(isYouTube, cookiesEnabled = true) {
+    const base = [
+        '--no-playlist', '--no-warnings', '--no-check-certificate',
+        '--no-cache-dir',
+        '--add-header', `User-Agent:${YT_UA}`,
+        '--js-runtimes', 'node',
+        '-S', 'vcodec:h264,res,acodec:m4a',
+        '--concurrent-fragments', '4',
+        '--buffer-size', '1M',
+        '--newline'
+    ];
+    if (isYouTube && !cookiesEnabled) return base;
+    return [...base, ...cookiesArg];
+}
 
 // ─── Cleanup every 10 minutes ─────────────────────────────────────────────────
 setInterval(() => {
@@ -268,11 +267,9 @@ app.post('/api/info', async (req, res) => {
         let data = '', err = '';
 
         const isYouTube = targetUrl.includes('youtube.com') || targetUrl.includes('youtu.be');
-        // 3-tier YouTube client ladder: tv_embedded → web_embedded → auto-select
-        const argSets = [INFO_ARGS_0, INFO_ARGS_1, INFO_ARGS_2];
-        const currentArgs = (isYouTube && retryAttempt <= 2) ? [...argSets[retryAttempt]] : [...INFO_ARGS_2];
+        const currentArgs = getInfoArgs(retryAttempt, isYouTube);
 
-        console.log(`[fetchInfo] attempt=${retryAttempt} url=${targetUrl}`);
+        console.log(`[fetchInfo] attempt=${retryAttempt} url=${targetUrl} (isYouTube=${isYouTube})`);
         const proc = spawn(YT_DLP, ['--dump-json', ...currentArgs, targetUrl]);
         proc.stdout.on('data', d => data += d);
         proc.stderr.on('data', d => err += d);
@@ -281,9 +278,9 @@ app.post('/api/info', async (req, res) => {
                 console.error(`yt-dlp info failed (attempt ${retryAttempt}) for ${targetUrl}`);
                 console.error(`Exit code: ${code} | stderr: ${err.slice(0, 300)}`);
 
-                // YouTube: try next client in the ladder (up to 2 retries)
-                if (isYouTube && retryAttempt < 2) {
-                    console.log(`Retrying YouTube with client tier ${retryAttempt + 1}...`);
+                // YouTube: try next client in the ladder (up to 3 retries)
+                if (isYouTube && retryAttempt < 3) {
+                    console.log(`Retrying YouTube with tier ${retryAttempt + 1}...`);
                     return fetchInfo(targetUrl, isStream, retryAttempt + 1);
                 }
 
@@ -385,105 +382,113 @@ app.post('/api/start-download', (req, res) => {
         }
     }
 
-    // ─── Build yt-dlp args ────────────────────────────────────────────────────
-    let args;
-    if (isAudio) {
-        // ✅ Fixed: explicit .mp3 output path so file-finder works after --extract-audio renames it
-        const outPath = path.join(TMP_DIR, `${fileId}.mp3`);
-        if (HAS_FFMPEG) {
-            args = [
-                '-f', 'bestaudio/best',
-                '--extract-audio', '--audio-format', 'mp3', '--audio-quality', '0',
-                ...DL_ARGS,
-                '-o', outPath, url,
-            ];
+    const runDownload = (cookiesEnabled = true) => {
+        const isYouTube = url.includes('youtube.com') || url.includes('youtu.be');
+        const dlArgs = getDownloadArgs(isYouTube, cookiesEnabled);
+        
+        let args;
+        if (isAudio) {
+            const outPath = path.join(TMP_DIR, `${fileId}.mp3`);
+            if (HAS_FFMPEG) {
+                args = [
+                    '-f', 'bestaudio/best',
+                    '--extract-audio', '--audio-format', 'mp3', '--audio-quality', '0',
+                    ...dlArgs,
+                    '-o', outPath, url,
+                ];
+            } else {
+                args = [
+                    '-f', 'bestaudio[ext=m4a]/bestaudio/best',
+                    ...dlArgs,
+                    '-o', outPath, url,
+                ];
+            }
+            job._expectedPath = outPath;
         } else {
-            args = [
-                '-f', 'bestaudio[ext=m4a]/bestaudio/best',
-                ...DL_ARGS,
-                '-o', outPath, url,
-            ];
+            if (HAS_FFMPEG) {
+                const fmt = height
+                    ? `bestvideo[height<=${height}][ext=mp4]+bestaudio/bestvideo[height<=${height}]+bestaudio/best`
+                    : 'bestvideo[ext=mp4]+bestaudio/bestvideo+bestaudio/best';
+                args = [
+                    '-f', fmt,
+                    '--merge-output-format', 'mp4',
+                    ...dlArgs,
+                    '-o', path.join(TMP_DIR, `${fileId}.%(ext)s`), url,
+                ];
+            } else {
+                const fmt = height
+                    ? `best[height<=${height}][ext=mp4]/best[height<=${height}]/best`
+                    : 'best[ext=mp4]/best';
+                args = [
+                    '-f', fmt,
+                    ...dlArgs,
+                    '-o', path.join(TMP_DIR, `${fileId}.%(ext)s`), url,
+                ];
+            }
         }
-        job._expectedPath = outPath;
-    } else {
-        if (HAS_FFMPEG) {
-            // ✅ Height-based: bestvideo[height<=N] works across all yt-dlp clients
-            const fmt = height
-                ? `bestvideo[height<=${height}][ext=mp4]+bestaudio/bestvideo[height<=${height}]+bestaudio/best`
-                : 'bestvideo[ext=mp4]+bestaudio/bestvideo+bestaudio/best';
-            args = [
-                '-f', fmt,
-                '--merge-output-format', 'mp4',
-                ...DL_ARGS,
-                '-o', path.join(TMP_DIR, `${fileId}.%(ext)s`), url,
-            ];
-        } else {
-            const fmt = height
-                ? `best[height<=${height}][ext=mp4]/best[height<=${height}]/best`
-                : 'best[ext=mp4]/best';
-            args = [
-                '-f', fmt,
-                ...DL_ARGS,
-                '-o', path.join(TMP_DIR, `${fileId}.%(ext)s`), url,
-            ];
-        }
-    }
 
-    console.log(`⬇️  [${job._type.toUpperCase()}] job=${jobId} height=${height || 'best'}`);
+        console.log(`⬇️  [${job._type.toUpperCase()}] cookies=${cookiesEnabled} job=${jobId} height=${height || 'best'}`);
 
+        const proc = spawn(YT_DLP, args);
+        job._proc = proc;
 
-    const proc = spawn(YT_DLP, args);
-    job._proc = proc;
+        let stderr = '';
+        proc.stdout.on('data', d => d.toString().split('\n').forEach(l => l.trim() && parseLine(l)));
+        proc.stderr.on('data', d => {
+            const t = d.toString();
+            stderr += t;
+            process.stdout.write(d);
+            t.split('\n').forEach(l => l.trim() && parseLine(l));
+        });
 
-    let stderr = '';
-    proc.stdout.on('data', d => d.toString().split('\n').forEach(l => l.trim() && parseLine(l)));
-    proc.stderr.on('data', d => {
-        const t = d.toString();
-        stderr += t;
-        process.stdout.write(d);
-        t.split('\n').forEach(l => l.trim() && parseLine(l));
-    });
-
-    const killTimer = setTimeout(() => {
-        proc.kill('SIGTERM');
-        job.status = 'error';
-        job.error  = 'Timed out — video too large or network too slow.';
-        broadcast({ status: 'error', error: job.error });
-    }, 15 * 60 * 1000);
-
-    proc.on('close', code => {
-        clearTimeout(killTimer);
-        if (code !== 0) {
+        const killTimer = setTimeout(() => {
+            proc.kill('SIGTERM');
             job.status = 'error';
-            job.error  = `Download failed (exit ${code}). ` + stderr.slice(-400);
+            job.error  = 'Timed out — video too large or network too slow.';
             broadcast({ status: 'error', error: job.error });
-            return;
-        }
+        }, 15 * 60 * 1000);
 
-        // Find completed file — check explicit path first (audio), then scan directory
-        let foundFile = null;
-        if (job._expectedPath && fs.existsSync(job._expectedPath)) {
-            foundFile = path.basename(job._expectedPath);
-        } else {
-            const files = fs.readdirSync(TMP_DIR).filter(f =>
-                f.startsWith(fileId) && !f.endsWith('.part') && !f.endsWith('.ytdl') && !f.endsWith('.json')
-            );
-            if (files.length) foundFile = files[0];
-        }
+        proc.on('close', code => {
+            clearTimeout(killTimer);
+            if (code !== 0) {
+                // If it failed with cookies, try once more without them
+                if (cookiesEnabled && isYouTube) {
+                    console.log(`🔄 Download failed with cookies, retrying WITHOUT cookies for: ${url}`);
+                    return runDownload(false);
+                }
+                job.status = 'error';
+                job.error  = `Download failed (exit ${code}). ` + stderr.slice(-400);
+                broadcast({ status: 'error', error: job.error });
+                return;
+            }
 
-        if (!foundFile) {
-            job.status = 'error';
-            job.error  = 'Output file not found after download.';
-            broadcast({ status: 'error', error: job.error });
-            return;
-        }
+            // Find completed file — check explicit path first (audio), then scan directory
+            let foundFile = null;
+            if (job._expectedPath && fs.existsSync(job._expectedPath)) {
+                foundFile = path.basename(job._expectedPath);
+            } else {
+                const files = fs.readdirSync(TMP_DIR).filter(f =>
+                    f.startsWith(fileId) && !f.endsWith('.part') && !f.endsWith('.ytdl') && !f.endsWith('.json')
+                );
+                if (files.length) foundFile = files[0];
+            }
 
-        job.filePath = path.join(TMP_DIR, foundFile);
-        job.status   = 'done';
-        job.percent  = 100;
-        broadcast({ status: 'done', percent: 100, fetchUrl: `/api/fetch/${jobId}` });
-        console.log(`✅ Done: ${job.filePath}`);
-    });
+            if (!foundFile) {
+                job.status = 'error';
+                job.error  = 'Output file not found after download.';
+                broadcast({ status: 'error', error: job.error });
+                return;
+            }
+
+            job.filePath = path.join(TMP_DIR, foundFile);
+            job.status   = 'done';
+            job.percent  = 100;
+            broadcast({ status: 'done', percent: 100, fetchUrl: `/api/fetch/${jobId}` });
+            console.log(`✅ Done: ${job.filePath}`);
+        });
+    };
+
+    runDownload(true);
 
     res.json({ jobId });
 });
