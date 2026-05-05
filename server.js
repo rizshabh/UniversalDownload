@@ -192,11 +192,15 @@ app.post('/api/info', async (req, res) => {
     let { url } = req.body;
     if (!url) return res.status(400).json({ error: 'URL is required' });
 
-    // 🔴 Convert YouTube Shorts to standard watch URLs (Bypasses aggressive Shorts bot detection)
+    // 🔴 Convert YouTube Shorts and youtu.be to standard watch URLs (Bypasses aggressive Shorts bot detection)
     if (url.includes('youtube.com/shorts/')) {
         const videoId = url.split('/shorts/')[1].split('?')[0];
         url = `https://www.youtube.com/watch?v=${videoId}`;
         console.log(`🔄 Converted Shorts URL to standard watch URL: ${url}`);
+    } else if (url.includes('youtu.be/')) {
+        const videoId = url.split('youtu.be/')[1].split('?')[0];
+        url = `https://www.youtube.com/watch?v=${videoId}`;
+        console.log(`🔄 Converted youtu.be URL to standard watch URL: ${url}`);
     }
 
     // Intercept Terabox URLs and use the paid API instead of yt-dlp/puppeteer
@@ -266,9 +270,12 @@ app.post('/api/start-download', (req, res) => {
     let { url, type, height } = req.body;
     if (!url) return res.status(400).json({ error: 'URL is required' });
 
-    // 🔴 Convert YouTube Shorts to standard watch URLs for download
+    // 🔴 Convert YouTube Shorts and youtu.be to standard watch URLs for download
     if (url.includes('youtube.com/shorts/')) {
         const videoId = url.split('/shorts/')[1].split('?')[0];
+        url = `https://www.youtube.com/watch?v=${videoId}`;
+    } else if (url.includes('youtu.be/')) {
+        const videoId = url.split('youtu.be/')[1].split('?')[0];
         url = `https://www.youtube.com/watch?v=${videoId}`;
     }
 
