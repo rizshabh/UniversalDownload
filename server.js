@@ -55,12 +55,20 @@ if (fs.existsSync(cookiesPath)) {
     console.log('⚠️  No cookies.txt found - YouTube may block downloads from Datacenter IPs');
 }
 
-// INFO: No extractor-args → yt-dlp uses its own best client (returns ALL qualities)
-// Using --extractor-args with 'web' was breaking info fetch due to YouTube anti-bot
+// INFO: tv_embedded client — bypasses bot detection on datacenter IPs (no PO-token needed)
+// android/android_vr fail on Railway/Render. tv_embedded is the most reliable alternative.
 const INFO_ARGS = [
     '--no-playlist', '--no-warnings', '--no-check-certificate',
-    '--no-cache-dir',
-    '--extractor-args', 'youtube:player_client=android,android_vr;client=android,ios',
+    '--no-cache-dir', '--socket-timeout', '30',
+    '--extractor-args', 'youtube:player_client=tv_embedded',
+    ...cookiesArg
+];
+
+// Fallback: no extractor-args — yt-dlp picks best available client with cookies
+// When cookies are valid, yt-dlp's default client selection often bypasses DC detection
+const INFO_ARGS_FALLBACK = [
+    '--no-playlist', '--no-warnings', '--no-check-certificate',
+    '--no-cache-dir', '--socket-timeout', '30',
     ...cookiesArg
 ];
 
@@ -69,7 +77,6 @@ const INFO_ARGS = [
 const DL_ARGS = [
     '--no-playlist', '--no-warnings', '--no-check-certificate',
     '--no-cache-dir',
-    '--extractor-args', 'youtube:player_client=android,android_vr;client=android,ios',
     '-S', 'vcodec:h264,res,acodec:m4a',
     '--concurrent-fragments', '4',
     '--buffer-size', '1M',
@@ -232,9 +239,14 @@ app.post('/api/info', async (req, res) => {
         }
     }
 
-    function fetchInfo(targetUrl, isStream = false) {
+    function fetchInfo(targetUrl, isStream = false, retryAttempt = 0) {
         let data = '', err = '';
-        const proc = spawn(YT_DLP, ['--dump-json', ...INFO_ARGS, targetUrl]);
+        
+        // retryAttempt 0 = ios client, 1 = tv_embedded fallback
+        const isYouTube = targetUrl.includes('youtube.com') || targetUrl.includes('youtu.be');
+        let currentArgs = (retryAttempt === 1 && isYouTube) ? [...INFO_ARGS_FALLBACK] : [...INFO_ARGS];
+
+        const proc = spawn(YT_DLP, ['--dump-json', ...currentArgs, targetUrl]);
         proc.stdout.on('data', d => data += d);
         proc.stderr.on('data', d => err += d);
         proc.on('close', async code => {
@@ -243,12 +255,17 @@ app.post('/api/info', async (req, res) => {
                 console.error(`Exit Code: ${code}`);
                 console.error(`Error Output: ${err}\n`);
 
+                if (retryAttempt === 0 && (targetUrl.includes('youtube.com') || targetUrl.includes('youtu.be'))) {
+                    console.log('Retrying with yt-dlp default client (no extractor-args + cookies)...');
+                    return fetchInfo(targetUrl, isStream, 1);
+                }
+
                 if (!isStream) {
                     console.log('yt-dlp failed, attempting puppeteer fallback for:', targetUrl);
                     const streamUrl = await extractStreamUrl(targetUrl);
                     if (streamUrl) {
                         console.log('Puppeteer found stream:', streamUrl);
-                        return fetchInfo(streamUrl, true);
+                        return fetchInfo(streamUrl, true, 0);
                     }
                 }
                 return res.status(400).json({ error: 'Could not fetch video info. URL may be invalid, private, or unsupported. Check server logs.' });
