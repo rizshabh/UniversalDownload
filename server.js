@@ -129,20 +129,30 @@ async function extractStreamUrl(url) {
         await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 15000 });
         
         try {
+            // 1. Click around the main page to load iframes
             await page.evaluate(() => {
-                // Try to click anywhere on the page to trigger popups/play
                 document.body.click();
-                
-                const v = document.querySelector('video');
-                if (v) v.play();
-                
-                // Common play button classes on custom/pirate sites
-                const buttons = document.querySelectorAll('.play-btn, .vjs-play-control, .plyr__control, .jw-icon-display, iframe, #play');
+                const buttons = document.querySelectorAll('.play-btn, iframe, #play, .server-item');
                 buttons.forEach(b => { try { b.click(); } catch(e){} });
             });
+
+            await new Promise(r => setTimeout(r, 2000));
+
+            // 2. Inject click/play logic into EVERY iframe (Bypasses MegaCloud/RabbitStream embeds)
+            for (const frame of page.frames()) {
+                try {
+                    await frame.evaluate(() => {
+                        document.body.click();
+                        const v = document.querySelector('video');
+                        if (v) v.play();
+                        const buttons = document.querySelectorAll('.play-btn, .vjs-play-control, .plyr__control, .jw-icon-display, .art-state');
+                        buttons.forEach(b => { try { b.click(); } catch(e){} });
+                    });
+                } catch(e) {}
+            }
         } catch(e) {}
 
-        // Wait longer for Cloudflare or heavy obfuscation scripts to load the stream
+        // Wait for the .m3u8 stream request to fire
         await new Promise(r => setTimeout(r, 8000));
         await browser.close();
         return streamUrl;
