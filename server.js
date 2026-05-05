@@ -64,24 +64,30 @@ if (fs.existsSync(cookiesPath)) {
     console.log('⚠️  No cookies.txt found - YouTube may block downloads from Datacenter IPs');
 }
 
-// INFO: tv_embedded — most reliable client for datacenter IPs (no PO-token)
+// INFO: 3-tier client ladder for Railway/datacenter IPs
+// web_creator is less flagged than tv_embedded; User-Agent makes requests look like real Chrome
+const YT_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
+
 const INFO_ARGS_0 = [
     '--no-playlist', '--no-warnings', '--no-check-certificate',
     '--no-cache-dir', '--socket-timeout', '30',
-    '--extractor-args', 'youtube:player_client=tv_embedded',
+    '--extractor-args', 'youtube:player_client=web_creator',
+    '--add-header', `User-Agent:${YT_UA}`,
     ...cookiesArg
 ];
-// Attempt 1 fallback: web_embedded (different embed context, different detection)
+// Tier 1: tv_embedded — different embed context, harder to fingerprint from DC
 const INFO_ARGS_1 = [
     '--no-playlist', '--no-warnings', '--no-check-certificate',
     '--no-cache-dir', '--socket-timeout', '30',
-    '--extractor-args', 'youtube:player_client=web_embedded',
+    '--extractor-args', 'youtube:player_client=tv_embedded',
+    '--add-header', `User-Agent:${YT_UA}`,
     ...cookiesArg
 ];
-// Attempt 2 fallback: let yt-dlp auto-select with cookies (picks safest available)
+// Tier 2: yt-dlp auto-select with cookies + user-agent (last resort)
 const INFO_ARGS_2 = [
     '--no-playlist', '--no-warnings', '--no-check-certificate',
     '--no-cache-dir', '--socket-timeout', '30',
+    '--add-header', `User-Agent:${YT_UA}`,
     ...cookiesArg
 ];
 
