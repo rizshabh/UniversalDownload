@@ -70,6 +70,7 @@ const DL_ARGS = [
     '--no-playlist', '--no-warnings', '--no-check-certificate',
     '--no-cache-dir',
     '--extractor-args', 'youtube:player_client=android,android_vr;client=android,ios',
+    '-S', 'vcodec:h264,res,acodec:m4a',
     '--concurrent-fragments', '4',
     '--buffer-size', '1M',
     '--newline',
